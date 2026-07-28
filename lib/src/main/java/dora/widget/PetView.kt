@@ -12,10 +12,9 @@ import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import dora.widget.petview.R
 import kotlin.math.abs
 import androidx.core.graphics.withSave
-import dora.widget.petview.R
-import kotlin.math.sin
 
 class PetView @JvmOverloads constructor(
     context: Context,
@@ -24,50 +23,39 @@ class PetView @JvmOverloads constructor(
 
     companion object {
         private const val INTERACTION_COOLDOWN = 3_000L
+        private const val MAX_INTERACTION_COUNT = 2
     }
+    /**
+     * 互动时间窗口
+     */
+    private var interactionWindowStart = 0L
+
+    /**
+     * 当前窗口内互动次数
+     */
+    private var interactionCount = 0
 
     private var petBitmap: Bitmap =
-        BitmapFactory.decodeResource(resources, R.drawable.ic_dview_pet)
+        BitmapFactory.decodeResource(resources, R.drawable.profile_katong)
     private var petState: PetState = PetState.NORMAL
-
-    /**
-     * 宠物健康值，范围为 0～100。
-     */
     private var health = 100f
 
-    /**
-     * 宠物死亡时使用的灰度滤镜。
-     */
     private val grayFilter = ColorMatrixColorFilter(
         ColorMatrix().apply {
             setSaturation(0f)
         }
     )
 
-    /**
-     * 宠物当前状态。
-     */
     enum class PetState {
         NORMAL,
         ILL,
         DEAD
     }
 
-    /**
-     * 设置宠物健康值，并自动限制在合法范围内。
-     *
-     * @param value 新的健康值。
-     */
     private fun setHealth(value: Float) {
         health = value.coerceIn(0f, 100f)
     }
 
-    /**
-     * 根据健康值和死亡状态更新宠物外观状态。
-     *
-     * @param health 当前健康值。
-     * @param dead 是否死亡。
-     */
     fun updateState(health: Float, dead: Boolean) {
         setHealth(health)
         petState = when {
@@ -78,9 +66,6 @@ class PetView @JvmOverloads constructor(
         invalidate()
     }
 
-    /**
-     * 用于接收宠物互动事件的监听器。
-     */
     interface InteractionListener {
 
         /**
@@ -102,47 +87,31 @@ class PetView @JvmOverloads constructor(
         interactionListener = listener
     }
 
-    /**
-     * 绘制宠物图像的画笔。
-     */
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-    /**
-     * 用于自动巡逻动画的主线程 Handler。
-     */
     private val handler = Handler(Looper.getMainLooper())
 
-    /** 宠物当前位置坐标及垂直速度。 */
     private var petX = 0f
     private var petY = 0f
     private var velocityY = 0f
 
-    /** 重力加速度和地面 Y 坐标。 */
     private var gravity = 1.2f
     private var groundY = 0f
 
-    /** 是否处于跳跃状态以及当前移动方向。 */
     private var isJumping = false
     private var movingRight = true
-
-    /**
-     * 上一次用户成功互动的时间。
-     */
-    private var lastInteractionTime = 0L
 
     /**
      * 自动巡逻。
      */
     private var autoMoveRunnable: Runnable? = null
 
-    /**
-     * 根据控件尺寸初始化宠物位置与自动巡逻。
-     */
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+
         petX = w / 2f - petBitmap.width / 2f
         groundY = h - petBitmap.height.toFloat()
         petY = groundY
+
         if (autoMoveRunnable == null) {
             startAutoMove()
         }
@@ -161,7 +130,7 @@ class PetView @JvmOverloads constructor(
         canvas.withSave {
             if (petState == PetState.ILL) {
                 val angle =
-                    sin(System.currentTimeMillis() / 120.0)
+                    kotlin.math.sin(System.currentTimeMillis() / 120.0)
                         .toFloat() * 3f
                 rotate(
                     angle,
@@ -175,9 +144,6 @@ class PetView @JvmOverloads constructor(
         invalidate()
     }
 
-    /**
-     * 根据当前状态计算巡逻速度。
-     */
     private fun getMoveSpeed(): Float {
         return when {
             // 濒死状态不再移动
@@ -189,9 +155,6 @@ class PetView @JvmOverloads constructor(
         }
     }
 
-    /**
-     * 启动宠物自动巡逻。
-     */
     private fun startAutoMove() {
         autoMoveRunnable = object : Runnable {
             override fun run() {
@@ -214,9 +177,6 @@ class PetView @JvmOverloads constructor(
         handler.post(autoMoveRunnable!!)
     }
 
-    /**
-     * 更新跳跃物理效果。
-     */
     private fun updatePhysics() {
         if (!isJumping) return
         velocityY += gravity
@@ -239,41 +199,42 @@ class PetView @JvmOverloads constructor(
         return true
     }
 
-    /**
-     * 判断指定坐标是否点击到了宠物。
-     */
     private fun isTouchPet(x: Float, y: Float): Boolean {
         val centerX = petX + petBitmap.width / 2f
         val centerY = petY + petBitmap.height / 2f
+
         val dx = abs(x - centerX)
         val dy = abs(y - centerY)
+
         return dx < petBitmap.width / 2f &&
                 dy < petBitmap.height / 2f
     }
 
     /**
      * 用户点击宠物的互动逻辑。
+     *
+     * 3秒内最多跳2次
      */
     private fun performInteraction() {
         val now = System.currentTimeMillis()
-        val elapsed = now - lastInteractionTime
-        val remainMillis = INTERACTION_COOLDOWN - elapsed
-        if (remainMillis > 0L) {
+        // 超过3秒，重新计算
+        if (now - interactionWindowStart >= INTERACTION_COOLDOWN) {
+            interactionWindowStart = now
+            interactionCount = 0
+        }
+        // 达到次数限制
+        if (interactionCount >= MAX_INTERACTION_COUNT) {
+            val remainMillis = INTERACTION_COOLDOWN - (now - interactionWindowStart)
             interactionListener?.onCooldown(remainMillis)
             return
         }
         if (isJumping) {
             return
         }
-        lastInteractionTime = now
+        interactionCount++
         jump(notifyInteraction = true)
     }
 
-    /**
-     * 使宠物跳跃。
-     *
-     * @param notifyInteraction 是否通知监听器。
-     */
     private fun jump(notifyInteraction: Boolean = false) {
         if (isJumping) return
         isJumping = true
@@ -287,16 +248,16 @@ class PetView @JvmOverloads constructor(
      * 获取当前互动剩余冷却时间。
      */
     fun getInteractionCooldownRemain(): Long {
-        val elapsed = System.currentTimeMillis() - lastInteractionTime
+        if (interactionCount < MAX_INTERACTION_COUNT) {
+            return 0L
+        }
+        val elapsed = System.currentTimeMillis() - interactionWindowStart
         return (INTERACTION_COOLDOWN - elapsed).coerceAtLeast(0L)
     }
 
-    /**
-     * 停止自动巡逻任务，释放资源。
-     */
     override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
         autoMoveRunnable?.let(handler::removeCallbacks)
         handler.removeCallbacksAndMessages(null)
-        super.onDetachedFromWindow()
     }
 }

@@ -25,18 +25,17 @@ class PetView @JvmOverloads constructor(
         private const val INTERACTION_COOLDOWN = 3_000L
         private const val MAX_INTERACTION_COUNT = 2
     }
+    
     /**
-     * 互动时间窗口
+     * 互动时间窗口。
      */
     private var interactionWindowStart = 0L
 
     /**
-     * 当前窗口内互动次数
+     * 当前窗口内互动次数。
      */
     private var interactionCount = 0
-
-    private var petBitmap: Bitmap =
-        BitmapFactory.decodeResource(resources, R.drawable.profile_katong)
+    private var petBitmap: Bitmap = BitmapFactory.decodeResource(resources, R.drawable.ic_dview_pet)
     private var petState: PetState = PetState.NORMAL
     private var health = 100f
 
